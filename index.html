@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>WebRTC Viewer</title>
+</head>
+
+<body>
+    <h1>WebRTC Viewer</h1>
+    <video id="remoteVideo" autoplay playsinline></video>
+
+    <script>
+        const videoElement = document.getElementById('remoteVideo');
+        const urlParams = new URLSearchParams(window.location.search);
+        console.log('URL params:', urlParams);
+        const streamId = urlParams.get('streamId');
+        console.log('Stream ID:', streamId);
+        const wsUrl = 'ws://localhost:3000';
+        const connection = new WebSocket(wsUrl);
+        const clientId = "viewer-1"
+        connection.onopen = () => {
+            const logins = { type: 'SignIn', streamId: clientId };
+            console.log('Sending message:', logins);
+            connection.send(JSON.stringify({ type: 'SignIn', streamId: clientId }));
+
+            console.log('Connected to WebSocket server');
+            if (streamId) {
+                const data = { type: 'WatchStream', streamId: streamId, target: clientId };
+                console.log('Sending message:', data);
+                connection.send(JSON.stringify({ type: 'WatchStream', streamId: streamId, target: clientId}));
+            } else {
+                console.error('Missing streamId parameter');
+            }
+        };
+
+        connection.onmessage = async (message) => {
+            const data = JSON.parse(message.data);
+            switch (data.type) {
+                case 'Offer':
+                    await handleOffer(data.data);
+                    break;
+                case 'Answer':
+                    await handleAnswer(data.data);
+                    break;
+                case 'IceCandidates':
+                    await handleIceCandidate(data.data);
+                    break;
+                case 'StreamStarted':
+                    console.log('Stream started:', data.streamId);
+                    break;
+                default:
+                    console.log('Unknown message type:', data.type);
+            }
+        };
+
+        let peerConnection;
+        let remoteStream;
+
+        async function handleOffer(offerSdp) {
+            console.log('Received offer:', offerSdp);
+            peerConnection = new RTCPeerConnection();
+            peerConnection.onicecandidate = handleIceCandidateEvent;
+            peerConnection.ontrack = handleTrackEvent;
+
+            remoteStream = new MediaStream();
+            videoElement.srcObject = remoteStream;
+
+            await peerConnection.setRemoteDescription(new RTCSessionDescription(offerSdp));
+            const answerSdp = await peerConnection.createAnswer();
+            await peerConnection.setLocalDescription(answerSdp);
+
+            connection.send(JSON.stringify({
+                type: 'Answer',
+                streamId: streamId,
+                target: data.streamId,
+                data: answerSdp
+            }));
+        }
+
+        async function handleAnswer(answerSdp) {
+            console.log('handleAnswer:', answerSdp);
+            await peerConnection.setRemoteDescription(new RTCSessionDescription(answerSdp));
+        }
+
+        async function handleIceCandidate(candidate) {
+            console.log('handleIceCandidate:', candidate);
+            if (candidate) {
+                await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+            }
+        }
+
+        function handleIceCandidateEvent(event) {
+            console.log('handleIceCandidateEvent:', event);
+            if (event.candidate) {
+                connection.send(JSON.stringify({
+                    type: 'IceCandidates',
+                    streamId: streamId,
+                    target: data.streamId,
+                    data: event.candidate
+                }));
+            }
+        }
+
+        function handleTrackEvent(event) {
+            console.log('Adding track:', event.track);
+            remoteStream.addTrack(event.track, remoteStream);
+        }
+    </script>
+</body>
+
+</html>
