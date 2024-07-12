@@ -9,99 +9,100 @@
     <h1>WebRTC Viewer</h1>
     <video id="remoteVideo" autoplay playsinline controls></video>
 
-    <script>
-        const videoElement = document.getElementById('remoteVideo');
-        const urlParams = new URLSearchParams(window.location.search);
-        const streamId = urlParams.get('streamId');
-        const wsUrl = 'ws://localhost:3000';
-        const connection = new WebSocket(wsUrl);
-        const clientId = "viewer-1";
-        let peerConnection;
-        let remoteStream = new MediaStream();
+   <script>
+    const videoElement = document.getElementById('remoteVideo');
+    const urlParams = new URLSearchParams(window.location.search);
+    const streamId = urlParams.get('streamId');
+    const wsUrl = 'ws://localhost:3000';
+    const connection = new WebSocket(wsUrl);
+    const clientId = "viewer-1";
+    let peerConnection;
+    let remoteStream = new MediaStream();
 
-        connection.onopen = () => {
-            connection.send(JSON.stringify({ type: 'SignIn', streamId: clientId }));
+    connection.onopen = () => {
+        connection.send(JSON.stringify({ type: 'SignIn', streamId: clientId }));
 
-            if (streamId) {
-                connection.send(JSON.stringify({ type: 'WatchStream', streamId: streamId, target: clientId }));
-            } else {
-                console.error('Missing streamId parameter');
-            }
-        };
+        if (streamId) {
+            connection.send(JSON.stringify({ type: 'WatchStream', streamId: streamId, target: clientId }));
+        } else {
+            console.error('Missing streamId parameter');
+        }
+    };
 
-        connection.onmessage = async (message) => {
-            const data = JSON.parse(message.data);
-            switch (data.type) {
-                case 'Offer':
-                    await handleOffer(data.data);
-                    break;
-                case 'Answer':
-                    // This case might not be necessary for a viewer client
-                    break;
-                case 'IceCandidates':
-                    await handleIceCandidate(data.data);
-                    break;
-                case 'StreamStarted':
-                    handleOffer(data.streamId);
-                    break;
-                default:
-                    console.log('Unknown message type:', data.type);
-            }
-        };
+    connection.onmessage = async (message) => {
+        const data = JSON.parse(message.data);
+        switch (data.type) {
+            case 'Offer':
+                await handleOffer(data.data);
+                break;
+            case 'Answer':
+                // This case might not be necessary for a viewer client
+                break;
+            case 'IceCandidates':
+                await handleOffer(data.data);
+                break;
+            case 'StreamStarted':
+                console.log('Stream started:', data.streamId);
+                break;
+            default:
+                console.log('Unknown message type:', data.type);
+        }
+    };
+
     async function handleOffer(offerSdp) {
-        console.log("Received offer SDP:", offerSdp); // Debug log
+            console.log("Received offer SDP:", offerSdp); // Debug log
 
-        peerConnection = new RTCPeerConnection({
-            iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] // Example STUN server
-        });
-        peerConnection.onicecandidate = handleIceCandidateEvent;
-        peerConnection.ontrack = handleTrackEvent;
+            peerConnection = new RTCPeerConnection({
+                iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] // Example STUN server
+            });
+            peerConnection.onicecandidate = handleIceCandidateEvent;
+            peerConnection.ontrack = handleTrackEvent;
 
-        videoElement.srcObject = remoteStream;
+            videoElement.srcObject = remoteStream;
 
-        try {
-            await peerConnection.setRemoteDescription(new RTCSessionDescription({
-                type: 'offer',
-                sdp: offerSdp
+            try {
+                await peerConnection.setRemoteDescription(new RTCSessionDescription({
+                    type: 'offer',
+                    sdp: offerSdp
+                }));
+            } catch (error) {
+                console.error("Error setting remote description:", error);
+                return; // Exit the function if there's an error
+            }
+
+            const answer = await peerConnection.createAnswer();
+            await peerConnection.setLocalDescription(answer);
+            connection.send(JSON.stringify({
+                type: 'Answer',
+                streamId: clientId,
+                target: streamId,
+                data: answer.sdp
             }));
-        } catch (error) {
-            console.error("Error setting remote description:", error);
-            return; // Exit the function if there's an error
         }
 
-        const answer = await peerConnection.createAnswer();
-        await peerConnection.setLocalDescription(answer);
-        connection.send(JSON.stringify({
-            type: 'Answer',
-            streamId: clientId,
-            target: streamId,
-            data: answer.sdp
-        }));
+    async function handleIceCandidate(candidate) {
+        try {
+            await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+        } catch (error) {
+            console.error('Error adding ICE candidate:', error);
+        }
     }
 
-        async function handleIceCandidate(candidate) {
-            try {
-                await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
-            } catch (error) {
-                console.error('Error adding ICE candidate:', error);
-            }
+    function handleIceCandidateEvent(event) {
+        if (event.candidate) {
+            connection.send(JSON.stringify({
+                type: 'IceCandidates',
+                streamId: clientId,
+                target: streamId,
+                data: event.candidate
+            }));
         }
+    }
 
-        function handleIceCandidateEvent(event) {
-            if (event.candidate) {
-                connection.send(JSON.stringify({
-                    type: 'IceCandidates',
-                    streamId: clientId,
-                    target: streamId,
-                    data: event.candidate
-                }));
-            }
-        }
-
-        function handleTrackEvent(event) {
-            remoteStream.addTrack(event.track);
-        }
-    </script>
+    function handleTrackEvent(event) {
+        remoteStream.addTrack(event.track);
+    }
+</script>
 </body>
 
 </html>
